@@ -2,10 +2,10 @@
 """
 Sozhaa Tech Chatbot backend (FastAPI)
 Features:
-- Gemini 1.5 Flash (context-limited to sozhaa.tech + sozhaa.ai)
-- Lightweight RAG (fetch seed pages)
-- Persists transcripts, saves Excel and emails to company & user immediately
-- /chat endpoint used by frontend widget
+- Gemini 1.5 Flash (sozhaa.tech context)
+- RAG fetch from site
+- Save transcripts in JSON + Excel
+- Email transcripts to company & user
 """
 
 from fastapi import FastAPI
@@ -22,12 +22,12 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 # --------------------------
-# CONFIG - replace with env vars or fill here (recommended: env vars)
+# CONFIG (hardcoded keys, for Render deploy)
 # --------------------------
 GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
-BOT_EMAIL = "chatbotsozhaatech@gmail.com"            # Gmail to send emails from (create app password)
+BOT_EMAIL = "chatbotsozhaatech@gmail.com"
 BOT_PASSWORD = "ykstkaxoeykorkze"
-COMPANY_EMAIL = "groupsozhaa@gmail.com"    # Where transcripts go
+COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -36,8 +36,8 @@ COMPANY_URLS = [
     "https://sozhaa.tech/contact",
 ]
 
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
 
 STORAGE_DIR = "chat_data"
 TRANSCRIPT_EXCEL = os.path.join(STORAGE_DIR, "sozhaa_full_chat_history.xlsx")
@@ -47,23 +47,20 @@ TRANSCRIPT_JSON = os.path.join(STORAGE_DIR, "sozhaa_transcripts.json")
 # Setup
 # --------------------------
 os.makedirs(STORAGE_DIR, exist_ok=True)
-
-# configure Gemini SDK
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# FastAPI app
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # in production, set to your domain
+    allow_origins=["*"],   # in production, restrict to your domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --------------------------
-# Utilities
+# Helpers
 # --------------------------
 def now_iso():
     return datetime.datetime.utcnow().isoformat() + "Z"
@@ -82,19 +79,18 @@ def fetch_snippets(urls, chars=1500):
             title = (s.title.string.strip() if s.title and s.title.string else u)
             snippets.append({"url": u, "title": title, "text": text[:chars]})
         except Exception as e:
-            snippets.append({"url": u, "title": u, "text": f"(failed to fetch: {e})"})
+            snippets.append({"url": u, "title": u, "text": f"(failed: {e})"})
     return snippets
 
 def build_system_prompt(snippets):
     context_text = "\n\n".join([f"{p['title']} ({p['url']}):\n{p['text']}" for p in snippets])
-    system = (
+    return (
         "You are Sozhaa Tech AI Assistant. Use only the company's information provided below "
         "(sozhaa.tech). Answer only about the company, services, pages and contact information. "
-        "If the user asks something outside company scope, reply politely that you only provide Sozhaa Tech info. "
-        "Keep replies concise and professional. End every reply with: 'Our team will connect with you soon 🚀'.\n\n"
-        "Company context (excerpts):\n" + context_text + "\n\n"
+        "If asked outside scope, reply politely that you only provide Sozhaa Tech info. "
+        "Keep replies concise. End with: 'Our team will connect with you soon 🚀'.\n\n"
+        "Company context:\n" + context_text + "\n\n"
     )
-    return system
 
 def call_gemini(system_prompt, history, user_message):
     history_text = ""
@@ -106,27 +102,22 @@ def call_gemini(system_prompt, history, user_message):
         resp = model.generate_content(prompt)
         if getattr(resp, "text", None):
             return resp.text.strip()
-        if isinstance(resp, dict) and "candidates" in resp:
-            return resp["candidates"][0].get("content", "").strip()
         return "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
     except Exception as e:
-        print("Error:", e)
-        return "Sorry — there was an error generating the reply. Our team will connect with you soon 🚀"
+        print("Gemini Error:", e)
+        return "Sorry — service unavailable. Our team will connect with you soon 🚀"
 
 def append_transcript_json(entry):
     all_data = []
     if os.path.exists(TRANSCRIPT_JSON):
         with open(TRANSCRIPT_JSON, "r", encoding="utf-8") as f:
-            try:
-                all_data = json.load(f)
-            except:
-                all_data = []
+            try: all_data = json.load(f)
+            except: all_data = []
     all_data.append(entry)
     with open(TRANSCRIPT_JSON, "w", encoding="utf-8") as f:
         json.dump(all_data, f, ensure_ascii=False, indent=2)
 
 def build_html_email(user_details, service, transcript):
-    # Build a neat HTML email for company / user
     header = f"""
     <h2>Sozhaa Tech — Chat Transcript</h2>
     <p><b>Name:</b> {user_details.get('name')}<br/>
@@ -136,15 +127,14 @@ def build_html_email(user_details, service, transcript):
     <b>Captured:</b> {now_iso()}</p>
     <hr/>
     <h3>Conversation</h3>
-    <table border="0" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
       <thead><tr style="background:#f2f2f2"><th>Time</th><th>Role</th><th>Message</th></tr></thead><tbody>
     """
-    rows = ""
-    for it in transcript:
-        safe_msg = (it.get("message") or "").replace("\n","<br/>")
-        rows += f"<tr><td>{it.get('timestamp')}</td><td>{it.get('role')}</td><td>{safe_msg}</td></tr>"
-    footer = "</tbody></table><hr/><p>End of transcript.</p>"
-    return header + rows + footer
+    rows = "".join([
+        f"<tr><td>{it.get('timestamp')}</td><td>{it.get('role')}</td><td>{(it.get('message') or '').replace(chr(10),'<br/>')}</td></tr>"
+        for it in transcript
+    ])
+    return header + rows + "</tbody></table><hr/><p>End of transcript.</p>"
 
 def send_email_with_attachment(to_email, subject, html_body, attachment_path=None):
     try:
@@ -163,32 +153,31 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
             msg.attach(part)
 
         context = ssl.create_default_context()
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls(context=context)
-        server.login(BOT_EMAIL, BOT_PASSWORD)
-        server.send_message(msg)
-        server.quit()
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls(context=context)
+            server.login(BOT_EMAIL, BOT_PASSWORD)
+            server.send_message(msg)
         return True, None
     except Exception as e:
         return False, str(e)
 
 # --------------------------
-# API models
+# Models
 # --------------------------
 class ChatPayload(BaseModel):
-    user_details: dict   # {"name","email","phone"}
+    user_details: dict
     message: str
     service: str = ""
-    history: list = []   # list of {"role","message","timestamp"}
+    history: list = []
 
 # --------------------------
-# Pre-fetch snippets once (refresh on restart)
+# Prefetch snippets
 # --------------------------
 SEED_SNIPPETS = fetch_snippets(COMPANY_URLS, chars=1500)
 SYSTEM_PROMPT = build_system_prompt(SEED_SNIPPETS)
 
 # --------------------------
-# Endpoints
+# Routes
 # --------------------------
 @app.get("/")
 def root():
@@ -196,49 +185,21 @@ def root():
 
 @app.post("/chat")
 async def chat_endpoint(payload: ChatPayload):
-    # Build history for model
-    history_for_model = []
-    for h in payload.history:
-        if h.get("role") and h.get("message"):
-            history_for_model.append((h["role"], h["message"]))
-
+    history_for_model = [(h["role"], h["message"]) for h in payload.history if h.get("role") and h.get("message")]
     user_msg = payload.message or ""
 
-    # Special-case: user ended the chat (frontend sends this exact token)
     if "[User ended the chat]" in user_msg:
-        assistant_text = (
-            "✅ Thank you for chatting with Sozhaa Tech 🚀<br>"
-            "Our team will contact you soon. Have a great day!"
-        )
+        assistant_text = "✅ Thank you for chatting with Sozhaa Tech 🚀<br>Our team will contact you soon."
     else:
         assistant_text = call_gemini(SYSTEM_PROMPT, history_for_model, user_msg)
 
-    # Build transcript entries (user + assistant)
-    t_user = {
-        "timestamp": now_iso(), "role": "user", "message": user_msg,
-        "service": payload.service or "",
-        "name": payload.user_details.get("name",""),
-        "email": payload.user_details.get("email",""),
-        "phone": payload.user_details.get("phone","")
-    }
-    t_bot = {
-        "timestamp": now_iso(), "role": "assistant", "message": assistant_text,
-        "service": payload.service or "",
-        "name": payload.user_details.get("name",""),
-        "email": payload.user_details.get("email",""),
-        "phone": payload.user_details.get("phone","")
-    }
-    transcript = [t_user, t_bot]
+    transcript = [
+        {"timestamp": now_iso(), "role": "user", "message": user_msg, **payload.user_details, "service": payload.service},
+        {"timestamp": now_iso(), "role": "assistant", "message": assistant_text, **payload.user_details, "service": payload.service}
+    ]
 
-    # Persist JSON transcript
-    append_transcript_json({
-        "user": payload.user_details,
-        "service": payload.service,
-        "transcript": transcript,
-        "captured_at": now_iso()
-    })
+    append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
 
-    # Persist Excel: append the two rows
     try:
         if os.path.exists(TRANSCRIPT_EXCEL):
             existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
@@ -249,31 +210,12 @@ async def chat_endpoint(payload: ChatPayload):
         combined.to_excel(TRANSCRIPT_EXCEL, index=False)
     except Exception as e:
         print("Excel save failed:", e)
+        combined = pd.DataFrame(transcript)
 
-    # Build HTML body and send emails immediately
     html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-100:])
 
-    # Send to company
-    ok, err = send_email_with_attachment(
-        COMPANY_EMAIL,
-        f"Live chat update — {payload.user_details.get('name')}",
-        html,
-        attachment_path=TRANSCRIPT_EXCEL
-    )
-    if not ok:
-        print("Email send error (company):", err)
+    send_email_with_attachment(COMPANY_EMAIL, f"Chat update — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
+    if payload.user_details.get("email"):
+        send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
 
-    # Also send transcript to user email (if provided)
-    user_email = payload.user_details.get("email")
-    if user_email:
-        ok_u, err_u = send_email_with_attachment(
-            user_email,
-            "Sozhaa Tech — Your Chat Transcript",
-            html,
-            attachment_path=TRANSCRIPT_EXCEL
-        )
-        if not ok_u:
-            print("Email send error (user):", err_u)
-
-    # Return assistant reply
-    return {"reply": assistant_text, "timestamp": now_iso()}
+    return {"reply": assistant_text}
