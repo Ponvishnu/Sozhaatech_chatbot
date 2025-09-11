@@ -88,24 +88,36 @@ def build_system_prompt(snippets):
         "You are Sozhaa Tech AI Assistant. Use only the company's information provided below "
         "(sozhaa.tech). Answer only about the company, services, pages and contact information. "
         "If asked outside scope, reply politely that you only provide Sozhaa Tech info. "
-        "Keep replies concise. End with: 'Our team will connect with you soon 🚀'.\n\n"
+        "Keep replies concise.'.\n\n"
         "Company context:\n" + context_text + "\n\n"
     )
 
 def call_gemini(system_prompt, history, user_message):
     history_text = ""
-    for role, text in history[-8:]:
+    for role, text in history[-6:]:  # keep shorter history = faster
         tag = "User" if role == "user" else "Assistant"
         history_text += f"{tag}: {text}\n"
     prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
+
     try:
-        resp = model.generate_content(prompt)
-        if getattr(resp, "text", None):
-            return resp.text.strip()
-        return "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
+        # STREAMING mode for faster first token
+        response = model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": 400},  # shorter = faster
+            stream=True
+        )
+
+        collected = []
+        for chunk in response:
+            if chunk.text:
+                collected.append(chunk.text)
+
+        return "".join(collected).strip() or "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
+
     except Exception as e:
         print("Gemini Error:", e)
         return "Sorry — service unavailable. Our team will connect with you soon 🚀"
+
 
 def append_transcript_json(entry):
     all_data = []
@@ -219,3 +231,4 @@ async def chat_endpoint(payload: ChatPayload):
         send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
 
     return {"reply": assistant_text}
+
