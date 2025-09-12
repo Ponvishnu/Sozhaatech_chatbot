@@ -48,7 +48,7 @@ TRANSCRIPT_JSON = os.path.join(STORAGE_DIR, "sozhaa_transcripts.json")
 # --------------------------
 os.makedirs(STORAGE_DIR, exist_ok=True)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-1.5-flash-8b")
 
 app = FastAPI()
 app.add_middleware(
@@ -231,4 +231,5 @@ async def chat_endpoint(payload: ChatPayload):
         send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
 
     return {"reply": assistant_text}
+
 
