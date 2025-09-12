@@ -100,17 +100,24 @@ def call_gemini(system_prompt, history, user_message):
     prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
 
     try:
-        response = model.generate_content(prompt, stream=True)  # ✅ stream mode
-        chunks = []
+        # STREAMING mode for faster first token
+        response = model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": 200},  # shorter = faster
+            stream=True
+        )
+
+        collected = []
         for chunk in response:
-            if chunk.candidates and chunk.candidates[0].content.parts:
-                part = chunk.candidates[0].content.parts[0].text
-                if part:
-                    chunks.append(part)
-        return "".join(chunks).strip()
+            if chunk.text:
+                collected.append(chunk.text)
+
+        return "".join(collected).strip() or "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
+
     except Exception as e:
         print("Gemini Error:", e)
         return "Sorry — service unavailable. Our team will connect with you soon 🚀"
+
 
 def append_transcript_json(entry):
     all_data = []
@@ -224,6 +231,7 @@ async def chat_endpoint(payload: ChatPayload):
         send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
 
     return {"reply": assistant_text}
+
 
 
 
