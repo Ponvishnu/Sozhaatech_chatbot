@@ -94,30 +94,23 @@ def build_system_prompt(snippets):
 
 def call_gemini(system_prompt, history, user_message):
     history_text = ""
-    for role, text in history[-6:]:  # keep shorter history = faster
+    for role, text in history[-3:]:  # keep shorter history = faster
         tag = "User" if role == "user" else "Assistant"
         history_text += f"{tag}: {text}\n"
     prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
 
     try:
-        # STREAMING mode for faster first token
-        response = model.generate_content(
-            prompt,
-            generation_config={"max_output_tokens": 400},  # shorter = faster
-            stream=True
-        )
-
-        collected = []
+        response = model.generate_content(prompt, stream=True)  # ✅ stream mode
+        chunks = []
         for chunk in response:
-            if chunk.text:
-                collected.append(chunk.text)
-
-        return "".join(collected).strip() or "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
-
+            if chunk.candidates and chunk.candidates[0].content.parts:
+                part = chunk.candidates[0].content.parts[0].text
+                if part:
+                    chunks.append(part)
+        return "".join(chunks).strip()
     except Exception as e:
         print("Gemini Error:", e)
         return "Sorry — service unavailable. Our team will connect with you soon 🚀"
-
 
 def append_transcript_json(entry):
     all_data = []
@@ -231,5 +224,6 @@ async def chat_endpoint(payload: ChatPayload):
         send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
 
     return {"reply": assistant_text}
+
 
 
