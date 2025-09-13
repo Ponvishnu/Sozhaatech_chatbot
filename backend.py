@@ -243,7 +243,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
     # --- Case 2: Support Request ---
     if "support" in user_msg.lower() or "contact" in user_msg.lower():
-        assistant_text = "✅ Thank you for reaching out 🚀 Our team will contact you soon."
+        assistant_text = "Please contact us at our official email address: groupsozhaatech@gmail.com. Alternatively, a representative from our company will reach out to you shortly. 🚀 Our team will contact you soon."
 
         def support_alert():
             alert_html = f"""
@@ -295,5 +295,6 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     background_tasks.add_task(save_and_email)
 
     return {"reply": assistant_text}
+
 
 
