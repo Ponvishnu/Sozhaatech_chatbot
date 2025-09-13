@@ -1,14 +1,5 @@
-# backend.py
-"""
-Sozhaa Tech Chatbot backend (FastAPI)
-Features:
-- Gemini 1.5 Flash (sozhaa.tech context)
-- RAG fetch from site
-- Save transcripts in JSON + Excel
-- Email transcripts to company & user
-"""
-
 from fastapi import FastAPI
+from fastapi import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import google.generativeai as genai
@@ -196,42 +187,68 @@ def root():
     return {"status": "ok", "msg": "Sozhaa Chatbot backend running"}
 
 @app.post("/chat")
-async def chat_endpoint(payload: ChatPayload):
+async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks):
     history_for_model = [(h["role"], h["message"]) for h in payload.history if h.get("role") and h.get("message")]
     user_msg = payload.message or ""
 
-    if "[User ended the chat]" in user_msg:
-        assistant_text = "✅ Thank you for chatting with Sozhaa Tech 🚀<br>Our team will contact you soon."
-    else:
-        assistant_text = call_gemini(SYSTEM_PROMPT, history_for_model, user_msg)
+    # --- Case 1: Support Request ---
+    if "support" in user_msg.lower() or "contact" in user_msg.lower():
+        assistant_text = "✅ Thank you for reaching out 🚀 Our team will contact you soon."
+        
+        # background: send alert email immediately
+        def support_alert():
+            alert_html = f"""
+            <h2>⚠️ Support Request Alert</h2>
+            <p>User requested support at {now_iso()}</p>
+            <p><b>Name:</b> {payload.user_details.get('name')}<br/>
+               <b>Email:</b> {payload.user_details.get('email')}<br/>
+               <b>Phone:</b> {payload.user_details.get('phone')}</p>
+            <p><b>Message:</b> {user_msg}</p>
+            """
+            send_email_with_attachment(COMPANY_EMAIL, "⚠️ Sozhaa Tech — Support Request", alert_html)
 
+            if payload.user_details.get("email"):
+                send_email_with_attachment(
+                    payload.user_details["email"],
+                    "Sozhaa Tech — Support Request Received",
+                    "<p>We received your request. Our team will contact you soon 🚀</p>"
+                )
+
+        background_tasks.add_task(support_alert)
+
+        return {"reply": assistant_text}
+
+    # --- Case 2: Normal AI Chat ---
+    assistant_text = call_gemini(SYSTEM_PROMPT, history_for_model, user_msg)
+
+    # create transcript entry
     transcript = [
         {"timestamp": now_iso(), "role": "user", "message": user_msg, **payload.user_details, "service": payload.service},
         {"timestamp": now_iso(), "role": "assistant", "message": assistant_text, **payload.user_details, "service": payload.service}
     ]
 
-    append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
+    # background: save + email
+    def save_and_email():
+        append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
+        
+        try:
+            if os.path.exists(TRANSCRIPT_EXCEL):
+                existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
+            else:
+                existing_df = pd.DataFrame(columns=["timestamp","role","message","service","name","email","phone"])
+            new_df = pd.DataFrame(transcript)
+            combined = pd.concat([existing_df, new_df], ignore_index=True)
+            combined.to_excel(TRANSCRIPT_EXCEL, index=False)
+        except Exception as e:
+            print("Excel save failed:", e)
+            combined = pd.DataFrame(transcript)
 
-    try:
-        if os.path.exists(TRANSCRIPT_EXCEL):
-            existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
-        else:
-            existing_df = pd.DataFrame(columns=["timestamp","role","message","service","name","email","phone"])
-        new_df = pd.DataFrame(transcript)
-        combined = pd.concat([existing_df, new_df], ignore_index=True)
-        combined.to_excel(TRANSCRIPT_EXCEL, index=False)
-    except Exception as e:
-        print("Excel save failed:", e)
-        combined = pd.DataFrame(transcript)
+        html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-100:])
+        send_email_with_attachment(COMPANY_EMAIL, f"Chat update — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
+        if payload.user_details.get("email"):
+            send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
 
-    html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-100:])
-
-    send_email_with_attachment(COMPANY_EMAIL, f"Chat update — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
-    if payload.user_details.get("email"):
-        send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
+    background_tasks.add_task(save_and_email)
 
     return {"reply": assistant_text}
-
-
-
 
