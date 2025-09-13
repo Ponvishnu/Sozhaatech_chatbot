@@ -191,11 +191,60 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     history_for_model = [(h["role"], h["message"]) for h in payload.history if h.get("role") and h.get("message")]
     user_msg = payload.message or ""
 
-    # --- Case 1: Support Request ---
+    # --- Case 1: User ends the chat ---
+    if "[User ended the chat]" in user_msg:
+        assistant_text = "✅ Thank you for chatting with Sozhaa Tech 🚀<br>Our team will contact you soon."
+
+        # Build transcript (all history + final end message)
+        transcript = []
+        for h in payload.history:
+            transcript.append({"timestamp": now_iso(), "role": h["role"], "message": h["message"], **payload.user_details, "service": payload.service})
+        transcript.append({"timestamp": now_iso(), "role": "user", "message": user_msg, **payload.user_details, "service": payload.service})
+        transcript.append({"timestamp": now_iso(), "role": "assistant", "message": assistant_text, **payload.user_details, "service": payload.service})
+
+        # Save JSON
+        append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
+
+        # Save Excel
+        try:
+            if os.path.exists(TRANSCRIPT_EXCEL):
+                existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
+            else:
+                existing_df = pd.DataFrame(columns=["timestamp","role","message","service","name","email","phone"])
+            new_df = pd.DataFrame(transcript)
+            combined = pd.concat([existing_df, new_df], ignore_index=True)
+            combined.to_excel(TRANSCRIPT_EXCEL, index=False)
+        except Exception as e:
+            print("Excel save failed:", e)
+            combined = pd.DataFrame(transcript)
+
+        # Build HTML email with full conversation
+        html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-200:])
+
+        # Send transcript to company
+        send_email_with_attachment(
+            COMPANY_EMAIL,
+            f"Chat Ended — {payload.user_details.get('name')}",
+            html,
+            TRANSCRIPT_EXCEL
+        )
+
+        # Send transcript + Thank You to user
+        if payload.user_details.get("email"):
+            thank_you_html = html + "<br><br><p>🙏 Thank you for chatting with Sozhaa Tech. Our team will connect with you soon.</p>"
+            send_email_with_attachment(
+                payload.user_details["email"],
+                "Sozhaa Tech — Chat Summary",
+                thank_you_html,
+                TRANSCRIPT_EXCEL
+            )
+
+        return {"reply": assistant_text}
+
+    # --- Case 2: Support Request ---
     if "support" in user_msg.lower() or "contact" in user_msg.lower():
         assistant_text = "✅ Thank you for reaching out 🚀 Our team will contact you soon."
-        
-        # background: send alert email immediately
+
         def support_alert():
             alert_html = f"""
             <h2>⚠️ Support Request Alert</h2>
@@ -206,7 +255,6 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             <p><b>Message:</b> {user_msg}</p>
             """
             send_email_with_attachment(COMPANY_EMAIL, "⚠️ Sozhaa Tech — Support Request", alert_html)
-
             if payload.user_details.get("email"):
                 send_email_with_attachment(
                     payload.user_details["email"],
@@ -215,22 +263,18 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
                 )
 
         background_tasks.add_task(support_alert)
-
         return {"reply": assistant_text}
 
-    # --- Case 2: Normal AI Chat ---
+    # --- Case 3: Normal AI Chat ---
     assistant_text = call_gemini(SYSTEM_PROMPT, history_for_model, user_msg)
 
-    # create transcript entry
     transcript = [
         {"timestamp": now_iso(), "role": "user", "message": user_msg, **payload.user_details, "service": payload.service},
         {"timestamp": now_iso(), "role": "assistant", "message": assistant_text, **payload.user_details, "service": payload.service}
     ]
 
-    # background: save + email
     def save_and_email():
         append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
-        
         try:
             if os.path.exists(TRANSCRIPT_EXCEL):
                 existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
@@ -251,4 +295,5 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     background_tasks.add_task(save_and_email)
 
     return {"reply": assistant_text}
+
 
