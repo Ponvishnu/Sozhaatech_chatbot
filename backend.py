@@ -21,7 +21,7 @@ BOT_PASSWORD = "ykstkaxoeykorkze"
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
 # --------------------------
-# WhatsApp Cloud API config
+# WhatsApp Cloud API config (paste credentials directly here)
 # --------------------------
 WHATSAPP_TOKEN = "EAAQYRWtYvBoBPS8XlGr6H1xjkMdoC4GZBZASzdn7OZADtJaLA6ESXCQbZCZAXQmtDZA74BoOXJVYqx4q07WFCuu5ebJPa1an190dnnWDeYVJStw5vd6GqwrELyJAHWANFqZBQfUNcqodH9OJ69359TJpwfB8cebIMBtQWDlI0K6Hzg9LZAFVptfzGbT9ZAF0YGZBrNsWBZAPRSHE1VJWOie8x4sCQ7cNbp1S1VZCZA4iqSc8meAZDZD"
 WHATSAPP_PHONE_NUMBER_ID = "787754397756112"
@@ -53,7 +53,7 @@ model = genai.GenerativeModel("gemini-1.5-flash-8b")
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # in production, restrict to your domain
+    allow_origins=["*"],  # in production, restrict to your domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,7 +98,6 @@ def call_gemini(system_prompt, history, user_message):
         tag = "User" if role == "user" else "Assistant"
         history_text += f"{tag}: {text}\n"
     prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
-
     try:
         response = model.generate_content(
             prompt,
@@ -150,7 +149,6 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
         msg["To"] = to_email
         msg["Subject"] = subject
         msg.attach(MIMEText(html_body, "html"))
-
         if attachment_path and os.path.exists(attachment_path):
             with open(attachment_path, "rb") as f:
                 part = MIMEBase("application", "octet-stream")
@@ -158,7 +156,6 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
             encoders.encode_base64(part)
             part.add_header("Content-Disposition", f'attachment; filename="{os.path.basename(attachment_path)}"')
             msg.attach(part)
-
         context = ssl.create_default_context()
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls(context=context)
@@ -240,14 +237,17 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     if "[User ended the chat]" in user_msg:
         assistant_text = "✅ Thank you for chatting with Sozhaa Tech 🚀<br>Our team will contact you soon."
 
+        # Build transcript (all history + final end message)
         transcript = []
         for h in payload.history:
             transcript.append({"timestamp": now_iso(), "role": h["role"], "message": h["message"], **payload.user_details, "service": payload.service})
         transcript.append({"timestamp": now_iso(), "role": "user", "message": user_msg, **payload.user_details, "service": payload.service})
         transcript.append({"timestamp": now_iso(), "role": "assistant", "message": assistant_text, **payload.user_details, "service": payload.service})
 
+        # Save JSON
         append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
 
+        # Save Excel
         try:
             if os.path.exists(TRANSCRIPT_EXCEL):
                 existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
@@ -260,19 +260,20 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             print("Excel save failed:", e)
             combined = pd.DataFrame(transcript)
 
+        # Build HTML email with full conversation
         html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-200:])
 
-        # Send transcript Excel file to company WhatsApp
+        # --- WhatsApp messages (background tasks) ---
         if os.path.exists(TRANSCRIPT_EXCEL):
             background_tasks.add_task(upload_and_send_document, TRANSCRIPT_EXCEL, COMPANY_WA_NUMBER)
 
-        # Send thank you message to user via WhatsApp
         user_phone_raw = payload.user_details.get("phone")
         user_phone = normalize_phone(user_phone_raw)
         if user_phone:
             thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
             background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
 
+        # Send transcript to company
         send_email_with_attachment(
             COMPANY_EMAIL,
             f"Chat Ended — {payload.user_details.get('name')}",
@@ -280,6 +281,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             TRANSCRIPT_EXCEL
         )
 
+        # Send transcript + Thank You to user
         if payload.user_details.get("email"):
             thank_you_html = html + "<br><br><p>🙏 Thank you for chatting with Sozhaa Tech. Our team will connect with you soon.</p>"
             send_email_with_attachment(
