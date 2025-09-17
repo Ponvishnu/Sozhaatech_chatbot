@@ -22,7 +22,7 @@ GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
 BOT_EMAIL = "chatbotsozhaatech@gmail.com"
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
-SENDGRID_API_KEY = "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"
+SENDGRID_API_KEY = "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"
 
 # WhatsApp Cloud API
 WHATSAPP_TOKEN = "EAAQYRWtYvBoBPXX6z9Xyrz4bT0rRZBAtcUrHFEZAsYxnYhDsc8oplAXURuh39FtthbCiufWcOGDqEiVhU887FYkJOe8aF44RpmHHg77WxK4aqxMmyDb8O9rlZCU2u8ZCvjbs6OLDBE2bAZBNmDB8Ogzynm4lklHO12aS1czIbwZB9a90Gsf29NK67puPDUagZDZD"
@@ -334,4 +334,5 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
     background_tasks.add_task(save_and_email)
     return {"reply": assistant_text}
+
 
