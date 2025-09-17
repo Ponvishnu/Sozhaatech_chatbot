@@ -23,7 +23,7 @@ COMPANY_EMAIL = "groupsozhaa@gmail.com"
 # --------------------------
 # WhatsApp Cloud API config (paste credentials directly here)
 # --------------------------
-WHATSAPP_TOKEN = "EAAQYRWtYvBoBPS8XlGr6H1xjkMdoC4GZBZASzdn7OZADtJaLA6ESXCQbZCZAXQmtDZA74BoOXJVYqx4q07WFCuu5ebJPa1an190dnnWDeYVJStw5vd6GqwrELyJAHWANFqZBQfUNcqodH9OJ69359TJpwfB8cebIMBtQWDlI0K6Hzg9LZAFVptfzGbT9ZAF0YGZBrNsWBZAPRSHE1VJWOie8x4sCQ7cNbp1S1VZCZA4iqSc8meAZDZD"
+WHATSAPP_TOKEN = "EAAQYRWtYvBoBPXiBziwbUnCdZBDtk38MW8FKY4KGao3e74DpqdnEIWf4teUg7SA38vjF1PuW6ntl5l9AKjlPBRGzosKpjeOZA5lwCynDoVwqVQeDZBIdeBZCZB5ZCWTDIYWYFZAEa7Fvqx838CmphYFZCP6lIDpfvOYjFi4OyoHKFCYmTNRU15cOUZB79ENZCKiQZDZD"
 WHATSAPP_PHONE_NUMBER_ID = "787754397756112"
 COMPANY_WA_NUMBER = "+917094062522"
 GRAPH_API_VERSION = "v22.0"
@@ -347,3 +347,4 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     background_tasks.add_task(save_and_email)
 
     return {"reply": assistant_text}
+
