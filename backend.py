@@ -271,6 +271,18 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
         # Build HTML email with full conversation
         html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-200:])
+        # --- send transcript to owner WhatsApp and thank-you to user (background) ---
+if os.path.exists(TRANSCRIPT_EXCEL):
+    # send the excel file to your company WhatsApp number (background)
+    background_tasks.add_task(upload_and_send_document, TRANSCRIPT_EXCEL, COMPANY_WA_NUMBER)
+
+# send a thank-you WhatsApp text to the user (if phone exists)
+user_phone_raw = payload.user_details.get("phone")
+user_phone = normalize_phone(user_phone_raw)
+if user_phone:
+    thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
+    background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
+
 
         # Send transcript to company
         send_email_with_attachment(
@@ -291,17 +303,6 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             )
 
         return {"reply": assistant_text}
-    # send excel transcript to owner WhatsApp
-    if os.path.exists(TRANSCRIPT_EXCEL):
-         background_tasks.add_task(upload_and_send_document, TRANSCRIPT_EXCEL, COMPANY_WA_NUMBER)
-
-    # send thank-you WhatsApp text to user
-        user_phone_raw = payload.user_details.get("phone")
-        user_phone = normalize_phone(user_phone_raw)
-    if user_phone:
-        thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
-        background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
-
 
     # --- Case 2: Support Request ---
     if "support" in user_msg.lower() or "contact" in user_msg.lower():
@@ -357,6 +358,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     background_tasks.add_task(save_and_email)
 
     return {"reply": assistant_text}
+
 
 
 
