@@ -19,15 +19,15 @@ GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
 BOT_EMAIL = "chatbotsozhaatech@gmail.com"
 BOT_PASSWORD = "ykstkaxoeykorkze"
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
+
 # --------------------------
-# WhatsApp Cloud API config (paste credentials directly here)
+# WhatsApp Cloud API config
 # --------------------------
-WHATSAPP_TOKEN = "EAAQYRWtYvBoBPS8XlGr6H1xjkMdoC4GZBZASzdn7OZADtJaLA6ESXCQbZCZAXQmtDZA74BoOXJVYqx4q07WFCuu5ebJPa1an190dnnWDeYVJStw5vd6GqwrELyJAHWANFqZBQfUNcqodH9OJ69359TJpwfB8cebIMBtQWDlI0K6Hzg9LZAFVptfzGbT9ZAF0YGZBrNsWBZAPRSHE1VJWOie8x4sCQ7cNbp1S1VZCZA4iqSc8meAZDZD"   # <-- paste token
-WHATSAPP_PHONE_NUMBER_ID = "787754397756112"                     # <-- paste phone-number-id
+WHATSAPP_TOKEN = "EAAQYRWtYvBoBPS8XlGr6H1xjkMdoC4GZBZASzdn7OZADtJaLA6ESXCQbZCZAXQmtDZA74BoOXJVYqx4q07WFCuu5ebJPa1an190dnnWDeYVJStw5vd6GqwrELyJAHWANFqZBQfUNcqodH9OJ69359TJpwfB8cebIMBtQWDlI0K6Hzg9LZAFVptfzGbT9ZAF0YGZBrNsWBZAPRSHE1VJWOie8x4sCQ7cNbp1S1VZCZA4iqSc8meAZDZD"
+WHATSAPP_PHONE_NUMBER_ID = "787754397756112"
 COMPANY_WA_NUMBER = "+917094062522"
 GRAPH_API_VERSION = "v22.0"
 GRAPH_API_BASE = f"https://graph.facebook.com/v22.0"
-
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -94,30 +94,25 @@ def build_system_prompt(snippets):
 
 def call_gemini(system_prompt, history, user_message):
     history_text = ""
-    for role, text in history[-3:]:  # keep shorter history = faster
+    for role, text in history[-3:]:
         tag = "User" if role == "user" else "Assistant"
         history_text += f"{tag}: {text}\n"
     prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
 
     try:
-        # STREAMING mode for faster first token
         response = model.generate_content(
             prompt,
-            generation_config={"max_output_tokens": 200},  # shorter = faster
+            generation_config={"max_output_tokens": 200},
             stream=True
         )
-
         collected = []
         for chunk in response:
             if chunk.text:
                 collected.append(chunk.text)
-
         return "".join(collected).strip() or "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
-
     except Exception as e:
         print("Gemini Error:", e)
         return "Sorry — service unavailable. Our team will connect with you soon 🚀"
-
 
 def append_transcript_json(entry):
     all_data = []
@@ -214,7 +209,6 @@ def upload_and_send_document(file_path, to):
         print("upload_and_send_document error:", e)
         return False, str(e)
 
-
 # --------------------------
 # Models
 # --------------------------
@@ -246,17 +240,14 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     if "[User ended the chat]" in user_msg:
         assistant_text = "✅ Thank you for chatting with Sozhaa Tech 🚀<br>Our team will contact you soon."
 
-        # Build transcript (all history + final end message)
         transcript = []
         for h in payload.history:
             transcript.append({"timestamp": now_iso(), "role": h["role"], "message": h["message"], **payload.user_details, "service": payload.service})
         transcript.append({"timestamp": now_iso(), "role": "user", "message": user_msg, **payload.user_details, "service": payload.service})
         transcript.append({"timestamp": now_iso(), "role": "assistant", "message": assistant_text, **payload.user_details, "service": payload.service})
 
-        # Save JSON
         append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
 
-        # Save Excel
         try:
             if os.path.exists(TRANSCRIPT_EXCEL):
                 existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
@@ -269,22 +260,19 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             print("Excel save failed:", e)
             combined = pd.DataFrame(transcript)
 
-        # Build HTML email with full conversation
         html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-200:])
-        # --- send transcript to owner WhatsApp and thank-you to user (background) ---
-if os.path.exists(TRANSCRIPT_EXCEL):
-    # send the excel file to your company WhatsApp number (background)
-    background_tasks.add_task(upload_and_send_document, TRANSCRIPT_EXCEL, COMPANY_WA_NUMBER)
 
-# send a thank-you WhatsApp text to the user (if phone exists)
-user_phone_raw = payload.user_details.get("phone")
-user_phone = normalize_phone(user_phone_raw)
-if user_phone:
-    thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
-    background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
+        # Send transcript Excel file to company WhatsApp
+        if os.path.exists(TRANSCRIPT_EXCEL):
+            background_tasks.add_task(upload_and_send_document, TRANSCRIPT_EXCEL, COMPANY_WA_NUMBER)
 
+        # Send thank you message to user via WhatsApp
+        user_phone_raw = payload.user_details.get("phone")
+        user_phone = normalize_phone(user_phone_raw)
+        if user_phone:
+            thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
+            background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
 
-        # Send transcript to company
         send_email_with_attachment(
             COMPANY_EMAIL,
             f"Chat Ended — {payload.user_details.get('name')}",
@@ -292,7 +280,6 @@ if user_phone:
             TRANSCRIPT_EXCEL
         )
 
-        # Send transcript + Thank You to user
         if payload.user_details.get("email"):
             thank_you_html = html + "<br><br><p>🙏 Thank you for chatting with Sozhaa Tech. Our team will connect with you soon.</p>"
             send_email_with_attachment(
@@ -358,8 +345,3 @@ if user_phone:
     background_tasks.add_task(save_and_email)
 
     return {"reply": assistant_text}
-
-
-
-
-
