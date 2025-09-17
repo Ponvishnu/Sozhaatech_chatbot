@@ -19,6 +19,15 @@ GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
 BOT_EMAIL = "chatbotsozhaatech@gmail.com"
 BOT_PASSWORD = "ykstkaxoeykorkze"
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
+# --------------------------
+# WhatsApp Cloud API config (paste credentials directly here)
+# --------------------------
+WHATSAPP_TOKEN = "EAAQYRWtYvBoBPS8XlGr6H1xjkMdoC4GZBZASzdn7OZADtJaLA6ESXCQbZCZAXQmtDZA74BoOXJVYqx4q07WFCuu5ebJPa1an190dnnWDeYVJStw5vd6GqwrELyJAHWANFqZBQfUNcqodH9OJ69359TJpwfB8cebIMBtQWDlI0K6Hzg9LZAFVptfzGbT9ZAF0YGZBrNsWBZAPRSHE1VJWOie8x4sCQ7cNbp1S1VZCZA4iqSc8meAZDZD"   # <-- paste token
+WHATSAPP_PHONE_NUMBER_ID = "787754397756112"                     # <-- paste phone-number-id
+COMPANY_WA_NUMBER = "+917094062522"
+GRAPH_API_VERSION = "v22.0"
+GRAPH_API_BASE = f"https://graph.facebook.com/v22.0"
+
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -164,6 +173,48 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
     except Exception as e:
         return False, str(e)
 
+def normalize_phone(phone):
+    if not phone: return None
+    s = str(phone).strip()
+    s = ''.join(ch for ch in s if ch.isdigit() or ch == '+')
+    if s.startswith('+'): return s
+    if len(s) == 10: return '+91' + s
+    if s.startswith('0'): return '+' + s.lstrip('0')
+    return '+' + s
+
+def send_whatsapp_text(to, message):
+    try:
+        url = f"{GRAPH_API_BASE}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+        payload = {"messaging_product":"whatsapp","to":to,"type":"text","text":{"body":message}}
+        r = requests.post(url, headers=headers, json=payload, timeout=15)
+        return r.status_code, r.text
+    except Exception as e:
+        print("send_whatsapp_text error:", e)
+        return None, str(e)
+
+def upload_and_send_document(file_path, to):
+    try:
+        upload_url = f"{GRAPH_API_BASE}/{WHATSAPP_PHONE_NUMBER_ID}/media"
+        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+        with open(file_path, "rb") as fh:
+            files = {"file": (os.path.basename(file_path), fh)}
+            data = {"messaging_product": "whatsapp"}
+            r = requests.post(upload_url, headers=headers, data=data, files=files, timeout=60)
+            r.raise_for_status()
+            media_id = r.json().get("id")
+            if not media_id: return False, f"no media id returned: {r.text}"
+        send_url = f"{GRAPH_API_BASE}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+        payload = {"messaging_product":"whatsapp","to":to,"type":"document","document":{"id":media_id,"filename":os.path.basename(file_path)}}
+        r2 = requests.post(send_url, headers=headers, json=payload, timeout=20)
+        r2.raise_for_status()
+        return True, None
+    except Exception as e:
+        print("upload_and_send_document error:", e)
+        return False, str(e)
+
+
 # --------------------------
 # Models
 # --------------------------
@@ -240,6 +291,17 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             )
 
         return {"reply": assistant_text}
+    # send excel transcript to owner WhatsApp
+    if os.path.exists(TRANSCRIPT_EXCEL):
+         background_tasks.add_task(upload_and_send_document, TRANSCRIPT_EXCEL, COMPANY_WA_NUMBER)
+
+    # send thank-you WhatsApp text to user
+        user_phone_raw = payload.user_details.get("phone")
+        user_phone = normalize_phone(user_phone_raw)
+    if user_phone:
+        thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
+        background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
+
 
     # --- Case 2: Support Request ---
     if "support" in user_msg.lower() or "contact" in user_msg.lower():
@@ -295,6 +357,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     background_tasks.add_task(save_and_email)
 
     return {"reply": assistant_text}
+
 
 
 
