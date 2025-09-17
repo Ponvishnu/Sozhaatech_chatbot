@@ -25,7 +25,7 @@ COMPANY_EMAIL = "groupsozhaa@gmail.com"
 SENDGRID_API_KEY = "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"
 
 # WhatsApp Cloud API
-WHATSAPP_TOKEN = "EAAQYRWtYvBoBPSZBXZAUkBh9SI8ROdTDjEYawb5nXX4IZC8DWJSV5Xn2aOHakiG31tZABNZB1ffHHhRwlIZCyqblObBNVeU0Aly9vYUJbZBJDUI62ZA4SWgGhkqMo6RXe55EkoZCZC14mRsFIOV1PlsuP79vfZAjXAXZCaKSxhPJcLKXNoIkM7ZB1ZBOtXBLNuCF5lMAZDZD"
+WHATSAPP_TOKEN = "EAAQYRWtYvBoBPR6ocRYNBfII7sDPizmZCHzDfbdo1TVNAU5qfkj9ZCrhJPuvcglcXUIRfzNNsaouAvcZBzm7jwixspgJztUZBZAhUpNZBsBDGZAiJDGZCQoAPCJvczmfLp7rgqdyeKUr9iBtL6TsZB4NxKxKrBJK8TgGGoe8TAKyozPUS5D1WbSjd7TOBLS21dAZDZD"
 WHATSAPP_PHONE_NUMBER_ID = "760558620282792"
 COMPANY_WA_NUMBER = "+917094062522"
 GRAPH_API_BASE = "https://graph.facebook.com/v22.0"
@@ -334,6 +334,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
     background_tasks.add_task(save_and_email)
     return {"reply": assistant_text}
+
 
 
 
