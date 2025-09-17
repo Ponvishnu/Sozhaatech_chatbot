@@ -10,12 +10,11 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import os, json, datetime, time, traceback, base64
 
-# SendGrid
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 
 # --------------------------
-# CONFIG (hardcoded keys, for Render deploy)
+# CONFIG
 # --------------------------
 
 GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
@@ -23,15 +22,13 @@ GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
 BOT_EMAIL = "chatbotsozhaatech@gmail.com"
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
-# SendGrid API key
 SENDGRID_API_KEY = "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"
 
-# WhatsApp Cloud API config
+# WhatsApp Cloud API
 WHATSAPP_TOKEN = "EAAQYRWtYvBoBPXiBziwbUnCdZBDtk38MW8FKY4KGao3e74DpqdnEIWf4teUg7SA38vjF1PuW6ntl5l9AKjlPBRGzosKpjeOZA5lwCynDoVwqVQeDZBIdeBZCZB5ZCWTDIYWYFZAEa7Fvqx838CmphYFZCP6lIDpfvOYjFi4OyoHKFCYmTNRU15cOUZB79ENZCKiQZDZD"
 WHATSAPP_PHONE_NUMBER_ID = "787754397756112"
 COMPANY_WA_NUMBER = "+917094062522"
-GRAPH_API_VERSION = "v22.0"
-GRAPH_API_BASE = f"https://graph.facebook.com/v22.0"
+GRAPH_API_BASE = "https://graph.facebook.com/v22.0"
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -55,7 +52,7 @@ model = genai.GenerativeModel("gemini-1.5-flash-8b")
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # restrict to your domain in production
+    allow_origins=["*"],  # in production restrict to your domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -239,21 +236,18 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     history_for_model = [(h["role"], h["message"]) for h in payload.history if h.get("role") and h.get("message")]
     user_msg = payload.message or ""
 
-    # Case 1: User ended the chat
+    # --- Case 1: User ends chat ---
     if "[User ended the chat]" in user_msg:
         assistant_text = "✅ Thank you for chatting with Sozhaa Tech 🚀<br>Our team will contact you soon."
 
-        # Build transcript
         transcript = []
         for h in payload.history:
             transcript.append({"timestamp": now_iso(), "role": h["role"], "message": h["message"], **payload.user_details, "service": payload.service})
         transcript.append({"timestamp": now_iso(), "role": "user", "message": user_msg, **payload.user_details, "service": payload.service})
         transcript.append({"timestamp": now_iso(), "role": "assistant", "message": assistant_text, **payload.user_details, "service": payload.service})
 
-        # Save JSON
         append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
 
-        # Save Excel
         try:
             if os.path.exists(TRANSCRIPT_EXCEL):
                 existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
@@ -267,41 +261,39 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             traceback.print_exc()
             combined = pd.DataFrame(transcript)
 
-        # Build email
         html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-200:])
 
-        # WhatsApp thank you to user
-        user_phone_raw = payload.user_details.get("phone")
-        user_phone = normalize_phone(user_phone_raw)
+        if os.path.exists(TRANSCRIPT_EXCEL):
+            background_tasks.add_task(send_whatsapp_text, COMPANY_WA_NUMBER, "📄 New chat transcript received. Please check email.")
+
+        user_phone = normalize_phone(payload.user_details.get("phone"))
         if user_phone:
             thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
             background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
 
-        # Send email to company
-        background_tasks.add_task(send_email_with_attachment, COMPANY_EMAIL, f"Chat Ended — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
+        send_email_with_attachment(COMPANY_EMAIL, f"Chat Ended — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
 
-        # Send email to user
         if payload.user_details.get("email"):
-            thank_html = html + "<br><br><p>🙏 Thank you for chatting with Sozhaa Tech. Our team will connect with you soon.</p>"
-            background_tasks.add_task(send_email_with_attachment, payload.user_details["email"], "Sozhaa Tech — Chat Summary", thank_html, TRANSCRIPT_EXCEL)
+            thank_you_html = html + "<br><br><p>🙏 Thank you for chatting with Sozhaa Tech. Our team will connect with you soon.</p>"
+            send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Chat Summary", thank_you_html, TRANSCRIPT_EXCEL)
 
         return {"reply": assistant_text}
 
-    # Case 2: Support Request
+    # --- Case 2: Support Request ---
     if "support" in user_msg.lower() or "contact" in user_msg.lower():
-        assistant_text = "Please contact us at our official email address: groupsozhaatech@gmail.com. Our team will reach out to you shortly 🚀."
+        assistant_text = "Please contact us at groupsozhaatech@gmail.com. Our team will reach out shortly 🚀."
 
         def support_alert():
             try:
                 alert_html = f"""
-                <h2>⚠️ Support Request Alert</h2>
+                <h2>⚠ Support Request Alert</h2>
                 <p>User requested support at {now_iso()}</p>
                 <p><b>Name:</b> {payload.user_details.get('name')}<br/>
-                   <b>Email:</b> {payload.user_details.get('email')}<br/>
-                   <b>Phone:</b> {payload.user_details.get('phone')}</p>
+                <b>Email:</b> {payload.user_details.get('email')}<br/>
+                <b>Phone:</b> {payload.user_details.get('phone')}</p>
                 <p><b>Message:</b> {user_msg}</p>
                 """
-                send_email_with_attachment(COMPANY_EMAIL, "⚠️ Sozhaa Tech — Support Request", alert_html)
+                send_email_with_attachment(COMPANY_EMAIL, "⚠ Sozhaa Tech — Support Request", alert_html)
                 if payload.user_details.get("email"):
                     send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Support Request Received", "<p>We received your request. Our team will contact you soon 🚀</p>")
             except Exception as e:
@@ -311,7 +303,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
         background_tasks.add_task(support_alert)
         return {"reply": assistant_text}
 
-    # Case 3: Normal AI Chat
+    # --- Case 3: Normal AI Chat ---
     assistant_text = call_gemini(SYSTEM_PROMPT, history_for_model, user_msg)
 
     transcript = [
@@ -330,12 +322,13 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             combined = pd.concat([existing_df, new_df], ignore_index=True)
             combined.to_excel(TRANSCRIPT_EXCEL, index=False)
         except Exception as e:
-            print("Excel save failed:", e)
+            print("Excel save failed in save_and_email:", e)
             traceback.print_exc()
             combined = pd.DataFrame(transcript)
 
         html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-100:])
         send_email_with_attachment(COMPANY_EMAIL, f"Chat update — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
+
         if payload.user_details.get("email"):
             send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
 
