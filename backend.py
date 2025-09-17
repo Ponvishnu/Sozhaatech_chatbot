@@ -1,12 +1,12 @@
-from fastapi import FastAPI
-from fastapi import BackgroundTasks
+# backend.py
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import os, json, datetime, smtplib, ssl
+import os, json, datetime, smtplib, ssl, time, traceback
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -111,6 +111,7 @@ def call_gemini(system_prompt, history, user_message):
         return "".join(collected).strip() or "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
     except Exception as e:
         print("Gemini Error:", e)
+        traceback.print_exc()
         return "Sorry — service unavailable. Our team will connect with you soon 🚀"
 
 def append_transcript_json(entry):
@@ -161,8 +162,11 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
             server.starttls(context=context)
             server.login(BOT_EMAIL, BOT_PASSWORD)
             server.send_message(msg)
+        print(f"✅ Email sent to {to_email}")
         return True, None
     except Exception as e:
+        print(f"❌ Email send failed to {to_email}: {e}")
+        traceback.print_exc()
         return False, str(e)
 
 def normalize_phone(phone):
@@ -174,37 +178,77 @@ def normalize_phone(phone):
     if s.startswith('0'): return '+' + s.lstrip('0')
     return '+' + s
 
+def _to_api_phone_format(phone):
+    # Graph expects digits (no leading +) for 'to'
+    if not phone: return None
+    return phone.lstrip('+')
+
 def send_whatsapp_text(to, message):
     try:
+        to_api = _to_api_phone_format(to)
         url = f"{GRAPH_API_BASE}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
         headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        payload = {"messaging_product":"whatsapp","to":to,"type":"text","text":{"body":message}}
+        payload = {"messaging_product":"whatsapp","to":to_api,"type":"text","text":{"body":message}}
         r = requests.post(url, headers=headers, json=payload, timeout=15)
+        print(f"WhatsApp text send response: status={r.status_code} body={r.text[:400]}")
         return r.status_code, r.text
     except Exception as e:
         print("send_whatsapp_text error:", e)
+        traceback.print_exc()
         return None, str(e)
 
 def upload_and_send_document(file_path, to):
     try:
+        to_api = _to_api_phone_format(to)
         upload_url = f"{GRAPH_API_BASE}/{WHATSAPP_PHONE_NUMBER_ID}/media"
         headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
         with open(file_path, "rb") as fh:
             files = {"file": (os.path.basename(file_path), fh)}
             data = {"messaging_product": "whatsapp"}
             r = requests.post(upload_url, headers=headers, data=data, files=files, timeout=60)
+            print("WhatsApp media upload response:", r.status_code, r.text[:500])
             r.raise_for_status()
             media_id = r.json().get("id")
-            if not media_id: return False, f"no media id returned: {r.text}"
+            if not media_id:
+                return False, f"no media id returned: {r.text}"
         send_url = f"{GRAPH_API_BASE}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
         headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        payload = {"messaging_product":"whatsapp","to":to,"type":"document","document":{"id":media_id,"filename":os.path.basename(file_path)}}
+        payload = {"messaging_product":"whatsapp","to":to_api,"type":"document","document":{"id":media_id,"filename":os.path.basename(file_path)}}
         r2 = requests.post(send_url, headers=headers, json=payload, timeout=20)
+        print("WhatsApp document send response:", r2.status_code, r2.text[:400])
         r2.raise_for_status()
         return True, None
     except Exception as e:
         print("upload_and_send_document error:", e)
+        traceback.print_exc()
         return False, str(e)
+
+# Safe wrappers with logging and one retry
+def safe_send_whatsapp_text(to, message, retries=1):
+    last = (None, "not attempted")
+    for attempt in range(retries + 1):
+        code, text = send_whatsapp_text(to, message)
+        last = (code, text)
+        if code and 200 <= code < 300:
+            print(f"✅ WhatsApp text delivered to {to} (attempt {attempt+1})")
+            return True, text
+        else:
+            print(f"⚠️ WhatsApp text failed to {to} (attempt {attempt+1}) status={code} body={str(text)[:400]}")
+            time.sleep(1)
+    return False, last
+
+def safe_upload_and_send_document(file_path, to, retries=1):
+    last = (False, "not attempted")
+    for attempt in range(retries + 1):
+        ok, err = upload_and_send_document(file_path, to)
+        if ok:
+            print(f"✅ Document {os.path.basename(file_path)} sent to {to} (attempt {attempt+1})")
+            return True, None
+        else:
+            print(f"⚠️ Document send failed to {to} (attempt {attempt+1}): {err}")
+            last = (False, err)
+            time.sleep(1)
+    return last
 
 # --------------------------
 # Models
@@ -258,6 +302,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             combined.to_excel(TRANSCRIPT_EXCEL, index=False)
         except Exception as e:
             print("Excel save failed:", e)
+            traceback.print_exc()
             combined = pd.DataFrame(transcript)
 
         # Build HTML email with full conversation
@@ -265,31 +310,37 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
         # --- WhatsApp messages (background tasks) ---
         if os.path.exists(TRANSCRIPT_EXCEL):
-            background_tasks.add_task(upload_and_send_document, TRANSCRIPT_EXCEL, COMPANY_WA_NUMBER)
+            # send the excel file to your company WhatsApp number (background) using safe wrapper
+            background_tasks.add_task(safe_upload_and_send_document, TRANSCRIPT_EXCEL, COMPANY_WA_NUMBER, 1)
 
+        # send a thank-you WhatsApp text to the user (if phone exists)
         user_phone_raw = payload.user_details.get("phone")
         user_phone = normalize_phone(user_phone_raw)
         if user_phone:
             thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
-            background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
+            background_tasks.add_task(safe_send_whatsapp_text, user_phone, thank_msg, 1)
 
-        # Send transcript to company
-        send_email_with_attachment(
+        # Send transcript to company (email)
+        ok, err = send_email_with_attachment(
             COMPANY_EMAIL,
             f"Chat Ended — {payload.user_details.get('name')}",
             html,
             TRANSCRIPT_EXCEL
         )
+        if not ok:
+            print("❌ Failed to email company:", err)
 
-        # Send transcript + Thank You to user
+        # Send transcript + Thank You to user (email)
         if payload.user_details.get("email"):
             thank_you_html = html + "<br><br><p>🙏 Thank you for chatting with Sozhaa Tech. Our team will connect with you soon.</p>"
-            send_email_with_attachment(
+            ok2, err2 = send_email_with_attachment(
                 payload.user_details["email"],
                 "Sozhaa Tech — Chat Summary",
                 thank_you_html,
                 TRANSCRIPT_EXCEL
             )
+            if not ok2:
+                print("❌ Failed to email user:", err2)
 
         return {"reply": assistant_text}
 
@@ -298,21 +349,25 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
         assistant_text = "Please contact us at our official email address: groupsozhaatech@gmail.com. Alternatively, a representative from our company will reach out to you shortly. 🚀 Our team will contact you soon."
 
         def support_alert():
-            alert_html = f"""
-            <h2>⚠️ Support Request Alert</h2>
-            <p>User requested support at {now_iso()}</p>
-            <p><b>Name:</b> {payload.user_details.get('name')}<br/>
-               <b>Email:</b> {payload.user_details.get('email')}<br/>
-               <b>Phone:</b> {payload.user_details.get('phone')}</p>
-            <p><b>Message:</b> {user_msg}</p>
-            """
-            send_email_with_attachment(COMPANY_EMAIL, "⚠️ Sozhaa Tech — Support Request", alert_html)
-            if payload.user_details.get("email"):
-                send_email_with_attachment(
-                    payload.user_details["email"],
-                    "Sozhaa Tech — Support Request Received",
-                    "<p>We received your request. Our team will contact you soon 🚀</p>"
-                )
+            try:
+                alert_html = f"""
+                <h2>⚠️ Support Request Alert</h2>
+                <p>User requested support at {now_iso()}</p>
+                <p><b>Name:</b> {payload.user_details.get('name')}<br/>
+                   <b>Email:</b> {payload.user_details.get('email')}<br/>
+                   <b>Phone:</b> {payload.user_details.get('phone')}</p>
+                <p><b>Message:</b> {user_msg}</p>
+                """
+                send_email_with_attachment(COMPANY_EMAIL, "⚠️ Sozhaa Tech — Support Request", alert_html)
+                if payload.user_details.get("email"):
+                    send_email_with_attachment(
+                        payload.user_details["email"],
+                        "Sozhaa Tech — Support Request Received",
+                        "<p>We received your request. Our team will contact you soon 🚀</p>"
+                    )
+            except Exception as e:
+                print("support_alert error:", e)
+                traceback.print_exc()
 
         background_tasks.add_task(support_alert)
         return {"reply": assistant_text}
@@ -326,8 +381,8 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     ]
 
     def save_and_email():
-        append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
         try:
+            append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": transcript, "captured_at": now_iso()})
             if os.path.exists(TRANSCRIPT_EXCEL):
                 existing_df = pd.read_excel(TRANSCRIPT_EXCEL)
             else:
@@ -336,15 +391,19 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             combined = pd.concat([existing_df, new_df], ignore_index=True)
             combined.to_excel(TRANSCRIPT_EXCEL, index=False)
         except Exception as e:
-            print("Excel save failed:", e)
+            print("Excel save failed in save_and_email:", e)
+            traceback.print_exc()
             combined = pd.DataFrame(transcript)
 
         html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-100:])
-        send_email_with_attachment(COMPANY_EMAIL, f"Chat update — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
+        ok, err = send_email_with_attachment(COMPANY_EMAIL, f"Chat update — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
+        if not ok:
+            print("❌ Failed to email company (update):", err)
         if payload.user_details.get("email"):
-            send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
+            ok2, err2 = send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
+            if not ok2:
+                print("❌ Failed to email user (update):", err2)
 
     background_tasks.add_task(save_and_email)
 
     return {"reply": assistant_text}
-
