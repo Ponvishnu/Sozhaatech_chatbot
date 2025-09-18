@@ -8,10 +8,11 @@ import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import os, json, datetime, time, traceback, base64
-
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+import os, json, datetime, time, traceback, base64, smtplib, ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
 # --------------------------
 # CONFIG
@@ -19,16 +20,15 @@ from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileT
 
 GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
 
-BOT_EMAIL = "chatbotsozhaatech@gmail.com"
+BOT_EMAIL = "chatbotsozhaatech@gmail.com"   
+BOT_EMAIL_PASSWORD = "wzlocbpwzofrjjaa"    
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
-
-SENDGRID_API_KEY = "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"
 
 # WhatsApp Cloud API
 WHATSAPP_TOKEN = "EAAQYRWtYvBoBPUA7Vq78oYUlgLREviUKQR8P1bVCopFAVOOG1zxGghHf992n9N4dogZCfIIuMrZC0ByJdc63wZCqwA2uacaTz3XZCpzcANNRKS2QnGeOp8h38exHCiYrYGUZALS6AALJI4eOSUuvWNDv1ZClDTZC0dauf75pZAJSQKPMYZBi5cCFzyk9e4DtrnJGeg3NPkZCWwZA7DaL6dRfccyZBO4qkU7mPuRGGAry"
 WHATSAPP_PHONE_NUMBER_ID = "787754397756112"
 COMPANY_WA_NUMBER = "+917094062522"
-GRAPH_API_BASE = "https://graph.facebook.com/v22.0"
+GRAPH_API_BASE = "https://graph.facebook.com/v20.0"
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -52,7 +52,7 @@ model = genai.GenerativeModel("gemini-1.5-flash-8b")
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # in production restrict to your domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -144,31 +144,31 @@ def build_html_email(user_details, service, transcript):
     return header + rows + "</tbody></table><hr/><p>End of transcript.</p>"
 
 # --------------------------
-# Send Email with SendGrid
+# Send Email with Gmail SMTP
 # --------------------------
 
 def send_email_with_attachment(to_email, subject, html_body, attachment_path=None):
     try:
-        message = Mail(
-            from_email=BOT_EMAIL,
-            to_emails=to_email,
-            subject=subject,
-            html_content=html_body
-        )
+        msg = MIMEMultipart()
+        msg['From'] = BOT_EMAIL
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(html_body, "html"))
+
         if attachment_path and os.path.exists(attachment_path):
             with open(attachment_path, "rb") as f:
-                data = f.read()
-                encoded = base64.b64encode(data).decode()
-                attachment = Attachment(
-                    FileContent(encoded),
-                    FileName(os.path.basename(attachment_path)),
-                    FileType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-                    Disposition("attachment")
-                )
-                message.attachment = attachment
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        response = sg.send(message)
-        print(f"✅ Email sent to {to_email}, status={response.status_code}")
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(attachment_path)}")
+                msg.attach(part)
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+            server.login(BOT_EMAIL, BOT_EMAIL_PASSWORD)
+            server.sendmail(BOT_EMAIL, to_email, msg.as_string())
+
+        print(f"✅ Email sent to {to_email}")
         return True, None
     except Exception as e:
         print(f"❌ Email send failed to {to_email}: {e}")
@@ -176,7 +176,7 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
         return False, str(e)
 
 # --------------------------
-# WhatsApp Messaging
+# WhatsApp Messaging (unchanged)
 # --------------------------
 
 def normalize_phone(phone):
@@ -334,6 +334,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
     background_tasks.add_task(save_and_email)
     return {"reply": assistant_text}
+
 
 
 
