@@ -8,11 +8,9 @@ import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import os, json, datetime, time, traceback, base64, smtplib, ssl
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
+import os, json, datetime, traceback, base64
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 
 # --------------------------
 # CONFIG
@@ -20,8 +18,8 @@ from email import encoders
 
 GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
 
-BOT_EMAIL = "chatbotsozhaatech@gmail.com"   
-BOT_EMAIL_PASSWORD = "wzlocbpwzofrjjaa"    
+SENDGRID_API_KEY = "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"   # <<< replace with your SendGrid API key
+BOT_EMAIL = "chatbotsozhaatech@gmail.com"    # Must be verified sender in SendGrid
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
 # WhatsApp Cloud API
@@ -144,31 +142,34 @@ def build_html_email(user_details, service, transcript):
     return header + rows + "</tbody></table><hr/><p>End of transcript.</p>"
 
 # --------------------------
-# Send Email with Gmail SMTP
+# Send Email (SendGrid)
 # --------------------------
 
 def send_email_with_attachment(to_email, subject, html_body, attachment_path=None):
     try:
-        msg = MIMEMultipart()
-        msg['From'] = BOT_EMAIL
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(html_body, "html"))
+        message = Mail(
+            from_email=BOT_EMAIL,
+            to_emails=to_email,
+            subject=subject,
+            html_content=html_body
+        )
 
         if attachment_path and os.path.exists(attachment_path):
             with open(attachment_path, "rb") as f:
-                part = MIMEBase("application", "octet-stream")
-                part.set_payload(f.read())
-                encoders.encode_base64(part)
-                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(attachment_path)}")
-                msg.attach(part)
+                data = f.read()
+                encoded = base64.b64encode(data).decode()
+                attachment = Attachment(
+                    FileContent(encoded),
+                    FileName(os.path.basename(attachment_path)),
+                    FileType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                    Disposition("attachment")
+                )
+                message.attachment = attachment
 
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
-            server.login(BOT_EMAIL, BOT_EMAIL_PASSWORD)
-            server.sendmail(BOT_EMAIL, to_email, msg.as_string())
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
 
-        print(f"✅ Email sent to {to_email}")
+        print(f"✅ Email sent to {to_email}, status={response.status_code}")
         return True, None
     except Exception as e:
         print(f"❌ Email send failed to {to_email}: {e}")
@@ -176,7 +177,7 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
         return False, str(e)
 
 # --------------------------
-# WhatsApp Messaging (unchanged)
+# WhatsApp Messaging
 # --------------------------
 
 def normalize_phone(phone):
@@ -334,16 +335,3 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
     background_tasks.add_task(save_and_email)
     return {"reply": assistant_text}
-
-
-
-
-
-
-
-
-
-
-
-
-
