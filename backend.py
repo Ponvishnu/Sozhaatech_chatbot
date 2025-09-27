@@ -1,6 +1,6 @@
 # backend.py
 
-from fastapi import FastAPI, BackgroundTasks, Request, Response
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -11,29 +11,23 @@ import pandas as pd
 import os, json, datetime, traceback, base64
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
-
-# Twilio imports
 from twilio.rest import Client
-from twilio.twiml.messaging_response import MessagingResponse
 
 # --------------------------
-# CONFIG
+# DIRECT CONFIG (Insert your keys here)
 # --------------------------
 
 GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
 
-SENDGRID_API_KEY = "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"   # <<< replace with your SendGrid API key
-BOT_EMAIL = "chatbotsozhaatech@gmail.com"    # Must be verified sender in SendGrid
-COMPANY_EMAIL = "groupsozhaa@gmail.com"
+SENDGRID_API_KEY = "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"
+BOT_EMAIL = "chatbotsozhaatech@gmail.com"
+COMPANY_EMAIL = "kpvijayvishnu@gmail.com"
 
-# --------------------------
 # Twilio WhatsApp API
-# --------------------------
 TWILIO_ACCOUNT_SID = "AC1d22ad1d0589eb769ee6b43dc97c0714"
 TWILIO_AUTH_TOKEN = "c3d95df63e80b1629cb1e1cce7786311"
-TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"
-
-COMPANY_WA_NUMBER = "+917094062522"
+TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"   # Twilio sandbox number
+COMPANY_WA_NUMBER = "whatsapp:+917094062522"       # Your company WhatsApp
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -52,7 +46,7 @@ TRANSCRIPT_JSON = os.path.join(STORAGE_DIR, "sozhaa_transcripts.json")
 
 os.makedirs(STORAGE_DIR, exist_ok=True)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash-8b")
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 app = FastAPI()
 app.add_middleware(
@@ -187,44 +181,18 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
 # WhatsApp Messaging (Twilio)
 # --------------------------
 
-def normalize_phone(phone):
-    if not phone: return None
-    s = str(phone).strip()
-    s = ''.join(ch for ch in s if ch.isdigit() or ch == '+')
-    if s.startswith('+'): return s
-    if len(s) == 10: return '+91' + s
-    if s.startswith('0'): return '+' + s.lstrip('0')
-    return '+' + s
-
 def send_whatsapp_text(to, message):
-    """
-    Sends WhatsApp message via Twilio
-    """
     try:
-        if not to:
-            return None, "No phone provided"
-
-        # normalize phone
-        to_number = normalize_phone(to)
-        if not to_number:
-            return None, "Invalid phone"
-
-        # Twilio format
-        if not to_number.startswith("whatsapp:"):
-            to_number = f"whatsapp:{to_number}"
-
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         msg = client.messages.create(
+            body=message,
             from_=TWILIO_WHATSAPP_NUMBER,
-            to=to_number,
-            body=message
+            to=to
         )
-        print(f"✅ WhatsApp sent to {to_number}, sid={msg.sid}")
-        return 200, msg.sid
+        print(f"✅ WhatsApp sent to {to}: {msg.sid}")
     except Exception as e:
-        print("❌ WhatsApp send failed:", e)
+        print(f"❌ WhatsApp send failed to {to}: {e}")
         traceback.print_exc()
-        return None, str(e)
 
 # --------------------------
 # Models
@@ -256,7 +224,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     history_for_model = [(h["role"], h["message"]) for h in payload.history if h.get("role") and h.get("message")]
     user_msg = payload.message or ""
 
-    # --- Case 1: User ends chat ---
+    # --- Case 1: End chat ---
     if "[User ended the chat]" in user_msg:
         assistant_text = "✅ Thank you for chatting with Sozhaa Tech 🚀<br>Our team will contact you soon."
 
@@ -283,13 +251,11 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
         html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-200:])
 
-        if os.path.exists(TRANSCRIPT_EXCEL):
-            background_tasks.add_task(send_whatsapp_text, COMPANY_WA_NUMBER, "📄 New chat transcript received. Please check email.")
+        background_tasks.add_task(send_whatsapp_text, COMPANY_WA_NUMBER, "📄 New chat transcript received. Please check email.")
 
-        user_phone = normalize_phone(payload.user_details.get("phone"))
-        if user_phone:
+        if payload.user_details.get("phone"):
             thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
-            background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)
+            background_tasks.add_task(send_whatsapp_text, "whatsapp:" + payload.user_details.get("phone"), thank_msg)
 
         send_email_with_attachment(COMPANY_EMAIL, f"Chat Ended — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
 
@@ -323,7 +289,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
         background_tasks.add_task(support_alert)
         return {"reply": assistant_text}
 
-    # --- Case 3: Normal AI Chat ---
+    # --- Case 3: Normal Chat ---
     assistant_text = call_gemini(SYSTEM_PROMPT, history_for_model, user_msg)
 
     transcript = [
