@@ -42,11 +42,11 @@ STORAGE_DIR = "chat_data"
 TRANSCRIPT_EXCEL = os.path.join(STORAGE_DIR, "sozhaa_full_chat_history.xlsx")
 TRANSCRIPT_JSON = os.path.join(STORAGE_DIR, "sozhaa_transcripts.json")
 
---------------------------
+#--------------------------
 
-Setup
+#Setup
 
---------------------------
+#--------------------------
 
 os.makedirs(STORAGE_DIR, exist_ok=True)
 genai.configure(api_key=GEMINI_API_KEY)
@@ -61,11 +61,11 @@ allow_methods=[""],
 allow_headers=["*"],
 )
 
---------------------------
+#--------------------------
 
-Helpers
+#Helpers
 
---------------------------
+#--------------------------
 
 def now_iso():
 return datetime.datetime.utcnow().isoformat() + "Z"
@@ -148,11 +148,11 @@ for it in transcript
 ])
 return header + rows + "</tbody></table><hr/><p>End of transcript.</p>"
 
---------------------------
+#--------------------------
 
-Send Email (SendGrid)
+#Send Email (SendGrid)
 
---------------------------
+#--------------------------
 
 def send_email_with_attachment(to_email, subject, html_body, attachment_path=None):
 try:
@@ -185,11 +185,11 @@ except Exception as e:
     traceback.print_exc()  
     return False, str(e)
 
---------------------------
+#--------------------------
 
-WhatsApp Messaging
+#WhatsApp Messaging
 
---------------------------
+#--------------------------
 
 def normalize_phone(phone):
 if not phone: return None
@@ -218,11 +218,11 @@ print("send_whatsapp_text error:", e)
 traceback.print_exc()
 return None, str(e)
 
---------------------------
+#--------------------------
 
-Models
+#Models
 
---------------------------
+#--------------------------
 
 class ChatPayload(BaseModel):
 user_details: dict
@@ -230,20 +230,20 @@ message: str
 service: str = ""
 history: list = []
 
---------------------------
+#--------------------------
 
-Prefetch snippets
+#Prefetch snippets
 
---------------------------
+#--------------------------
 
 SEED_SNIPPETS = fetch_snippets(COMPANY_URLS, chars=1500)
 SYSTEM_PROMPT = build_system_prompt(SEED_SNIPPETS)
 
---------------------------
+#--------------------------
 
-Routes
+#Routes
 
---------------------------
+#--------------------------
 
 @app.get("/")
 def root():
@@ -352,4 +352,5 @@ def save_and_email():
 
 background_tasks.add_task(save_and_email)  
 return {"reply": assistant_text}"
+
 
