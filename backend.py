@@ -90,27 +90,64 @@ def build_system_prompt(snippets):
         "Company context:\n" + context_text + "\n\n"
     )
 
+# --------------------------
+# FIXED Gemini Call
+# --------------------------
+
 def call_gemini(system_prompt, history, user_message):
     history_text = ""
     for role, text in history[-3:]:
         tag = "User" if role == "user" else "Assistant"
         history_text += f"{tag}: {text}\n"
     prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
+
     try:
         response = model.generate_content(
             prompt,
-            generation_config={"max_output_tokens": 200},
-            stream=True
+            generation_config={"max_output_tokens": 200}
         )
+
         collected = []
-        for chunk in response:
-            if chunk.text:
-                collected.append(chunk.text)
-        return "".join(collected).strip() or "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
+
+        # Try the most common shape: response.text
+        if getattr(response, "text", None):
+            collected.append(response.text)
+
+        # If not, try response.output
+        elif getattr(response, "output", None):
+            for out in response.output:
+                if getattr(out, "content", None):
+                    for c in out.content:
+                        if getattr(c, "text", None):
+                            collected.append(c.text)
+                elif getattr(out, "text", None):
+                    collected.append(out.text)
+
+        # If not, try response.generations
+        elif getattr(response, "generations", None):
+            for g in response.generations:
+                if getattr(g, "text", None):
+                    collected.append(g.text)
+                elif getattr(g, "content", None):
+                    for c in g.content:
+                        if getattr(c, "text", None):
+                            collected.append(c.text)
+
+        final_text = "".join(collected).strip()
+
+        if not final_text:
+            return "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
+
+        return final_text
+
     except Exception as e:
         print("Gemini Error:", e)
         traceback.print_exc()
         return "Sorry — service unavailable. Our team will connect with you soon 🚀"
+
+# --------------------------
+# Transcript + Email helpers
+# --------------------------
 
 def append_transcript_json(entry):
     all_data = []
@@ -334,5 +371,3 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
     background_tasks.add_task(save_and_email)  
     return {"reply": assistant_text}
-
-
