@@ -1,6 +1,6 @@
 # backend.py
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -12,6 +12,10 @@ import os, json, datetime, traceback, base64
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 
+# Twilio imports
+from twilio.rest import Client
+from twilio.twiml.messaging_response import MessagingResponse
+
 # --------------------------
 # CONFIG
 # --------------------------
@@ -22,11 +26,14 @@ SENDGRID_API_KEY = "SG.ObeXkB8RRFil7WZU2PIqQw.DGt9ij-AQGHgTspJP75Aj9TXYzUHWy8ZR8
 BOT_EMAIL = "chatbotsozhaatech@gmail.com"    # Must be verified sender in SendGrid
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
-# WhatsApp Cloud API
-WHATSAPP_TOKEN = "EAAQYRWtYvBoBPUA7Vq78oYUlgLREviUKQR8P1bVCopFAVOOG1zxGghHf992n9N4dogZCfIIuMrZC0ByJdc63wZCqwA2uacaTz3XZCpzcANNRKS2QnGeOp8h38exHCiYrYGUZALS6AALJI4eOSUuvWNDv1ZClDTZC0dauf75pZAJSQKPMYZBi5cCFzyk9e4DtrnJGeg3NPkZCWwZA7DaL6dRfccyZBO4qkU7mPuRGGAry"
-WHATSAPP_PHONE_NUMBER_ID = "787754397756112"
+# --------------------------
+# Twilio WhatsApp API
+# --------------------------
+TWILIO_ACCOUNT_SID = "AC1d22ad1d0589eb769ee6b43dc97c0714"
+TWILIO_AUTH_TOKEN = "c3d95df63e80b1629cb1e1cce7786311"
+TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"
+
 COMPANY_WA_NUMBER = "+917094062522"
-GRAPH_API_BASE = "https://graph.facebook.com/v20.0"
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -177,7 +184,7 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
         return False, str(e)
 
 # --------------------------
-# WhatsApp Messaging
+# WhatsApp Messaging (Twilio)
 # --------------------------
 
 def normalize_phone(phone):
@@ -189,21 +196,33 @@ def normalize_phone(phone):
     if s.startswith('0'): return '+' + s.lstrip('0')
     return '+' + s
 
-def _to_api_phone_format(phone):
-    if not phone: return None
-    return phone.lstrip('+')
-
 def send_whatsapp_text(to, message):
+    """
+    Sends WhatsApp message via Twilio
+    """
     try:
-        to_api = _to_api_phone_format(to)
-        url = f"{GRAPH_API_BASE}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
-        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        payload = {"messaging_product":"whatsapp","to":to_api,"type":"text","text":{"body":message}}
-        r = requests.post(url, headers=headers, json=payload, timeout=15)
-        print(f"WhatsApp text send response: status={r.status_code} body={r.text[:400]}")
-        return r.status_code, r.text
+        if not to:
+            return None, "No phone provided"
+
+        # normalize phone
+        to_number = normalize_phone(to)
+        if not to_number:
+            return None, "Invalid phone"
+
+        # Twilio format
+        if not to_number.startswith("whatsapp:"):
+            to_number = f"whatsapp:{to_number}"
+
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        msg = client.messages.create(
+            from_=TWILIO_WHATSAPP_NUMBER,
+            to=to_number,
+            body=message
+        )
+        print(f"✅ WhatsApp sent to {to_number}, sid={msg.sid}")
+        return 200, msg.sid
     except Exception as e:
-        print("send_whatsapp_text error:", e)
+        print("❌ WhatsApp send failed:", e)
         traceback.print_exc()
         return None, str(e)
 
