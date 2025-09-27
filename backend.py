@@ -12,11 +12,11 @@ import os, json, datetime, traceback, base64
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 
---------------------------
+#--------------------------
 
-CONFIG
+#CONFIG
 
---------------------------
+#--------------------------
 
 GEMINI_API_KEY = "AIzaSyB8YVZz-UYA6ILALFOX1ljdnsYgWLiYE_Q"
 
@@ -352,3 +352,4 @@ def save_and_email():
 
 background_tasks.add_task(save_and_email)  
 return {"reply": assistant_text}"
+
