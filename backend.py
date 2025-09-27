@@ -24,7 +24,7 @@ SENDGRID_API_KEY = "SG.ObeXkB8RRFil7WZU2PIqQw.DGt9ij-AQGHgTspJP75Aj9TXYzUHWy8ZR8
 BOT_EMAIL = "chatbotsozhaatech@gmail.com"    # Must be verified sender in SendGrid
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
-WhatsApp Cloud API
+#WhatsApp Cloud API
 
 WHATSAPP_TOKEN = "EAAQYRWtYvBoBPUA7Vq78oYUlgLREviUKQR8P1bVCopFAVOOG1zxGghHf992n9N4dogZCfIIuMrZC0ByJdc63wZCqwA2uacaTz3XZCpzcANNRKS2QnGeOp8h38exHCiYrYGUZALS6AALJI4eOSUuvWNDv1ZClDTZC0dauf75pZAJSQKPMYZBi5cCFzyk9e4DtrnJGeg3NPkZCWwZA7DaL6dRfccyZBO4qkU7mPuRGGAry"
 WHATSAPP_PHONE_NUMBER_ID = "787754397756112"
@@ -352,5 +352,6 @@ def save_and_email():
 
 background_tasks.add_task(save_and_email)  
 return {"reply": assistant_text}"
+
 
 
