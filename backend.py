@@ -11,7 +11,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from twilio.rest import Client   # ✅ Twilio import
+from twilio.rest import Client
 
 # --------------------------
 # CONFIG
@@ -23,11 +23,11 @@ BOT_EMAIL = "chatbotsozhaatech@gmail.com"
 BOT_EMAIL_PASSWORD = "wzlocbpwzofrjjaa"
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
-# ✅ Twilio WhatsApp API
+# Twilio WhatsApp API
 TWILIO_SID = "AC1d22ad1d0589eb769ee6b43dc97c0714"
 TWILIO_AUTH = "c3d95df63e80b1629cb1e1cce7786311"
 TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"  # Twilio sandbox
-COMPANY_WA_NUMBER = "whatsapp:+917094062522"     # ✅ your number
+COMPANY_WA_NUMBER = "whatsapp:+917094062522"     # Your WhatsApp
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -46,7 +46,7 @@ TRANSCRIPT_JSON = os.path.join(STORAGE_DIR, "sozhaa_transcripts.json")
 
 os.makedirs(STORAGE_DIR, exist_ok=True)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("models/gemini-2.5-flash")
+model = genai.GenerativeModel("gemini-1.5-flash")  # ✅ stable model
 
 app = FastAPI()
 app.add_middleware(
@@ -64,12 +64,12 @@ app.add_middleware(
 def now_iso():
     return datetime.datetime.utcnow().isoformat() + "Z"
 
-def fetch_snippets(urls, chars=1500):
+def fetch_snippets(urls, chars=2000):
     snippets = []
     headers = {"User-Agent": "SozhaaBot/1.0 (+https://sozhaa.tech)"}
     for u in urls:
         try:
-            r = requests.get(u, headers=headers, timeout=8)
+            r = requests.get(u, headers=headers, timeout=10)
             r.raise_for_status()
             s = BeautifulSoup(r.text, "html.parser")
             for t in s.select("nav, footer, header, script, style, noscript"):
@@ -87,31 +87,26 @@ def build_system_prompt(snippets):
         "You are Sozhaa Tech AI Assistant. Use only the company's information provided below "
         "(sozhaa.tech). Answer only about the company, services, pages and contact information. "
         "If asked outside scope, reply politely that you only provide Sozhaa Tech info. "
-        "Keep replies concise.\n\n"
+        "Keep replies clear, detailed, and professional.\n\n"
         "Company context:\n" + context_text + "\n\n"
     )
 
 def call_gemini(system_prompt, history, user_message):
-    # ✅ Custom rule for web service queries
+    # Special rule for service queries
     if "web service" in user_message.lower() or "services" in user_message.lower():
         return (
-            "Sozhaa Tech provides professional web services 🚀.\n"
-            "You can get our services by contacting us at 📧 groupsozhaatech@gmail.com.\n"
+            "Sozhaa Tech provides a wide range of professional web services 🚀.\n"
+            "You can get our services by visiting our website or contacting us at 📧 groupsozhaatech@gmail.com.\n"
             "Our team will guide you further."
         )
-
-    history_text = ""
-    for role, text in history[-3:]:
-        tag = "User" if role == "user" else "Assistant"
-        history_text += f"{tag}: {text}\n"
-    prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
     try:
-        response = model.generate_content(prompt, generation_config={"max_output_tokens": 200}, stream=True)
-        collected = []
-        for chunk in response:
-            if chunk.text:
-                collected.append(chunk.text)
-        return "".join(collected).strip() or "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
+        history_text = ""
+        for role, text in history[-3:]:
+            tag = "User" if role == "user" else "Assistant"
+            history_text += f"{tag}: {text}\n"
+        prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
+        response = model.generate_content(prompt, generation_config={"max_output_tokens": 300})
+        return response.text.strip() if response and response.text else "Sorry — I couldn’t generate a reply. Our team will connect with you soon 🚀"
     except Exception as e:
         print("Gemini Error:", e)
         traceback.print_exc()
@@ -181,7 +176,7 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
         return False, str(e)
 
 # --------------------------
-# WhatsApp Messaging via Twilio
+# WhatsApp via Twilio
 # --------------------------
 
 twilio_client = Client(TWILIO_SID, TWILIO_AUTH)
@@ -196,7 +191,7 @@ def send_whatsapp_text(to, message):
         print(f"✅ WhatsApp sent to {to}: SID={msg.sid}")
         return True, msg.sid
     except Exception as e:
-        print("❌ send_whatsapp_text error:", e)
+        print("❌ WhatsApp send error:", e)
         traceback.print_exc()
         return False, str(e)
 
@@ -214,7 +209,7 @@ class ChatPayload(BaseModel):
 # Prefetch snippets
 # --------------------------
 
-SEED_SNIPPETS = fetch_snippets(COMPANY_URLS, chars=1500)
+SEED_SNIPPETS = fetch_snippets(COMPANY_URLS, chars=2000)
 SYSTEM_PROMPT = build_system_prompt(SEED_SNIPPETS)
 
 # --------------------------
@@ -234,7 +229,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
     if "[User ended the chat]" in user_msg:
         assistant_text = "✅ Thank you for chatting with Sozhaa Tech 🚀\nOur team will contact you soon."
 
-        # ✅ Save transcript
+        # Save transcript
         transcript = []
         for h in payload.history:
             transcript.append({"timestamp": now_iso(), "role": h["role"], "message": h["message"], **payload.user_details, "service": payload.service})
@@ -258,16 +253,16 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
         html = build_html_email(payload.user_details, payload.service, combined.to_dict("records")[-200:])
 
-        # ✅ Send transcript notice to your WhatsApp
+        # WhatsApp to you
         background_tasks.add_task(send_whatsapp_text, COMPANY_WA_NUMBER, "📄 New chat transcript saved. Check email for details & Excel.")
 
-        # ✅ Thank you message to user via WhatsApp
+        # WhatsApp Thank you to user
         user_phone = payload.user_details.get("phone")
         if user_phone:
             thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"
             background_tasks.add_task(send_whatsapp_text, f"whatsapp:{user_phone}", thank_msg)
 
-        # ✅ Email to company + user
+        # Email to company + user
         send_email_with_attachment(COMPANY_EMAIL, f"Chat Ended — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)
         if payload.user_details.get("email"):
             thank_you_html = html + "<br><br><p>🙏 Thank you for chatting with Sozhaa Tech. Our team will connect with you soon.</p>"
@@ -277,14 +272,14 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
     # --- Case 2: Support Request ---
     if "support" in user_msg.lower() or "contact" in user_msg.lower():
-        assistant_text = "Please contact us at groupsozhaatech@gmail.com. Our team will reach out shortly 🚀."
+        assistant_text = "Please contact us at 📧 groupsozhaatech@gmail.com. Our team will reach out shortly 🚀."
         return {"reply": assistant_text}
 
     # --- Case 3: Normal AI Chat ---
     assistant_text = call_gemini(SYSTEM_PROMPT, history_for_model, user_msg)
 
-    # ✅ Save & send chat transcript update
-    def save_and_email():
+    # Save transcript update
+    def save_and_notify():
         try:
             append_transcript_json({"user": payload.user_details, "service": payload.service, "transcript": [
                 {"timestamp": now_iso(), "role": "user", "message": user_msg, **payload.user_details, "service": payload.service},
@@ -301,7 +296,7 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
             combined = pd.concat([existing_df, new_df], ignore_index=True)
             combined.to_excel(TRANSCRIPT_EXCEL, index=False)
         except Exception as e:
-            print("Excel save failed in save_and_email:", e)
+            print("Excel save failed:", e)
             traceback.print_exc()
             combined = pd.DataFrame()
 
@@ -311,8 +306,8 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
         if payload.user_details.get("email"):
             send_email_with_attachment(payload.user_details["email"], "Sozhaa Tech — Your Chat Transcript", html, TRANSCRIPT_EXCEL)
 
-        # ✅ WhatsApp update to company
+        # WhatsApp to you
         send_whatsapp_text(COMPANY_WA_NUMBER, "📩 Chat updated. Check email for transcript & Excel file.")
 
-    background_tasks.add_task(save_and_email)
+    background_tasks.add_task(save_and_notify)
     return {"reply": assistant_text}
