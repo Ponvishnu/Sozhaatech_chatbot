@@ -46,7 +46,7 @@ TRANSCRIPT_JSON = os.path.join(STORAGE_DIR, "sozhaa_transcripts.json")
 
 os.makedirs(STORAGE_DIR, exist_ok=True)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")  # ✅ stable model
+model = genai.GenerativeModel("gemini-2.5-flash")  # ✅ stable model
 
 app = FastAPI()
 app.add_middleware(
@@ -311,3 +311,4 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
 
     background_tasks.add_task(save_and_notify)
     return {"reply": assistant_text}
+
