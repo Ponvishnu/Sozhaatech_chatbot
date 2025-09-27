@@ -11,6 +11,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
+from twilio.rest import Client   # ✅ Twilio import
 
 # --------------------------
 # CONFIG
@@ -22,11 +23,11 @@ BOT_EMAIL = "chatbotsozhaatech@gmail.com"
 BOT_EMAIL_PASSWORD = "wzlocbpwzofrjjaa"
 COMPANY_EMAIL = "groupsozhaa@gmail.com"
 
-# WhatsApp Cloud API
-WHATSAPP_TOKEN = "EAAQYRWtYvBoBPUA7Vq78oYUlgLREviUKQR8P1bVCopFAVOOG1zxGghHf992n9N4dogZCfIIuMrZC0ByJdc63wZCqwA2uacaTz3XZCpzcANNRKS2QnGeOp8h38exHCiYrYGUZALS6AALJI4eOSUuvWNDv1ZClDTZC0dauf75pZAJSQKPMYZBi5cCFzyk9e4DtrnJGeg3NPkZCWwZA7DaL6dRfccyZBO4qkU7mPuRGGAry"
-WHATSAPP_PHONE_NUMBER_ID = "787754397756112"
-COMPANY_WA_NUMBER = "+917094062522"
-GRAPH_API_BASE = "https://graph.facebook.com/v20.0"
+# ✅ Twilio WhatsApp API
+TWILIO_SID = "AC1d22ad1d0589eb769ee6b43dc97c0714"
+TWILIO_AUTH = "c3d95df63e80b1629cb1e1cce7786311"
+TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"  # Twilio sandbox number
+COMPANY_WA_NUMBER = "whatsapp:+917094062522"     # ✅ your number
 
 COMPANY_URLS = [
     "https://sozhaa.tech/",
@@ -90,64 +91,27 @@ def build_system_prompt(snippets):
         "Company context:\n" + context_text + "\n\n"
     )
 
-# --------------------------
-# FIXED Gemini Call
-# --------------------------
-
 def call_gemini(system_prompt, history, user_message):
     history_text = ""
     for role, text in history[-3:]:
         tag = "User" if role == "user" else "Assistant"
         history_text += f"{tag}: {text}\n"
     prompt = system_prompt + "\nConversation:\n" + history_text + f"User: {user_message}\nAssistant:"
-
     try:
         response = model.generate_content(
             prompt,
-            generation_config={"max_output_tokens": 200}
+            generation_config={"max_output_tokens": 200},
+            stream=True
         )
-
         collected = []
-
-        # Try the most common shape: response.text
-        if getattr(response, "text", None):
-            collected.append(response.text)
-
-        # If not, try response.output
-        elif getattr(response, "output", None):
-            for out in response.output:
-                if getattr(out, "content", None):
-                    for c in out.content:
-                        if getattr(c, "text", None):
-                            collected.append(c.text)
-                elif getattr(out, "text", None):
-                    collected.append(out.text)
-
-        # If not, try response.generations
-        elif getattr(response, "generations", None):
-            for g in response.generations:
-                if getattr(g, "text", None):
-                    collected.append(g.text)
-                elif getattr(g, "content", None):
-                    for c in g.content:
-                        if getattr(c, "text", None):
-                            collected.append(c.text)
-
-        final_text = "".join(collected).strip()
-
-        if not final_text:
-            return "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
-
-        return final_text
-
+        for chunk in response:
+            if chunk.text:
+                collected.append(chunk.text)
+        return "".join(collected).strip() or "Sorry — I couldn't generate a reply. Our team will connect with you soon 🚀"
     except Exception as e:
         print("Gemini Error:", e)
         traceback.print_exc()
         return "Sorry — service unavailable. Our team will connect with you soon 🚀"
-
-# --------------------------
-# Transcript + Email helpers
-# --------------------------
 
 def append_transcript_json(entry):
     all_data = []
@@ -213,35 +177,24 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path=Non
         return False, str(e)
 
 # --------------------------
-# WhatsApp Messaging
+# WhatsApp Messaging via Twilio
 # --------------------------
 
-def normalize_phone(phone):
-    if not phone: return None
-    s = str(phone).strip()
-    s = ''.join(ch for ch in s if ch.isdigit() or ch == '+')
-    if s.startswith('+'): return s
-    if len(s) == 10: return '+91' + s
-    if s.startswith('0'): return '+' + s.lstrip('0')
-    return '+' + s
-
-def _to_api_phone_format(phone):
-    if not phone: return None
-    return phone.lstrip('+')
+twilio_client = Client(TWILIO_SID, TWILIO_AUTH)
 
 def send_whatsapp_text(to, message):
     try:
-        to_api = _to_api_phone_format(to)
-        url = f"{GRAPH_API_BASE}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
-        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        payload = {"messaging_product":"whatsapp","to":to_api,"type":"text","text":{"body":message}}
-        r = requests.post(url, headers=headers, json=payload, timeout=15)
-        print(f"WhatsApp text send response: status={r.status_code} body={r.text[:400]}")
-        return r.status_code, r.text
+        msg = twilio_client.messages.create(
+            from_=TWILIO_WHATSAPP_NUMBER,
+            body=message,
+            to=to
+        )
+        print(f"✅ WhatsApp sent to {to}: SID={msg.sid}")
+        return True, msg.sid
     except Exception as e:
-        print("send_whatsapp_text error:", e)
+        print("❌ send_whatsapp_text error:", e)
         traceback.print_exc()
-        return None, str(e)
+        return False, str(e)
 
 # --------------------------
 # Models
@@ -303,10 +256,10 @@ async def chat_endpoint(payload: ChatPayload, background_tasks: BackgroundTasks)
         if os.path.exists(TRANSCRIPT_EXCEL):  
             background_tasks.add_task(send_whatsapp_text, COMPANY_WA_NUMBER, "📄 New chat transcript received. Please check email.")  
 
-        user_phone = normalize_phone(payload.user_details.get("phone"))  
+        user_phone = payload.user_details.get("phone")  
         if user_phone:  
             thank_msg = "✅ Thanks for contacting Sozhaa Tech. Our team will contact you soon 🚀"  
-            background_tasks.add_task(send_whatsapp_text, user_phone, thank_msg)  
+            background_tasks.add_task(send_whatsapp_text, f"whatsapp:{user_phone}", thank_msg)  
 
         send_email_with_attachment(COMPANY_EMAIL, f"Chat Ended — {payload.user_details.get('name')}", html, TRANSCRIPT_EXCEL)  
 
